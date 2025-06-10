@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,6 +53,7 @@ type Logger struct {
 	jsonOutput bool
 	showCaller bool
 	color      bool
+	fields     map[string]any
 }
 
 // Config структура для настройки логгера
@@ -100,44 +102,86 @@ func (l *Logger) log(level Level, msg string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	var callerInfo string
+	now := time.Now().Format(time.RFC3339)
+	levelStr := levelStrings[level]
+
+	entry := map[string]interface{}{
+		"time":    now,
+		"level":   levelStr,
+		"message": msg,
+	}
+
 	if l.showCaller {
 		_, file, line, ok := runtime.Caller(3)
 		if ok {
 			shortFile := file[strings.LastIndex(file, "/")+1:]
-			callerInfo = fmt.Sprintf("%s:%d", shortFile, line)
+			entry["caller"] = fmt.Sprintf("%s:%d", shortFile, line)
 		}
 	}
 
-	now := time.Now().Format(time.RFC3339)
+	for k, v := range l.fields {
+		entry[k] = v
+	}
 
 	if l.jsonOutput {
-		entry := map[string]interface{}{
-			"time":    now,
-			"level":   levelStrings[level],
-			"message": msg,
-		}
-		if l.showCaller && callerInfo != "" {
-			entry["caller"] = callerInfo
-		}
 		data, _ := json.Marshal(entry)
 		l.out.Println(string(data))
 		return
 	}
 
-	// Текстовый формат
-	prefix := fmt.Sprintf("[%s] %s", levelStrings[level], now)
-	if l.showCaller && callerInfo != "" {
-		prefix += " " + callerInfo
+	// Текстовый лог
+	prefix := fmt.Sprintf("[%s] %s", levelStr, now)
+	if caller, ok := entry["caller"].(string); ok {
+		prefix += " " + caller
+	}
+
+	line := prefix + " " + msg
+	if len(l.fields) > 0 {
+		var fieldStrs []string
+		for k, v := range l.fields {
+			fieldStrs = append(fieldStrs, fmt.Sprintf("%s=%v", k, v))
+		}
+		line += " | " + strings.Join(fieldStrs, " ")
 	}
 
 	if l.color {
 		color := levelColors[level]
-		l.out.Println(color + prefix + " " + msg + colorReset)
+		l.out.Println(color + line + colorReset)
 	} else {
-		l.out.Println(prefix + " " + msg)
+		l.out.Println(line)
+	}
+}
+
+func (l *Logger) WithContext(ctx context.Context) *Logger {
+	fields := make(map[string]any)
+
+	if v := ctx.Value("request_id"); v != nil {
+		fields["request_id"] = v
+	}
+	if v := ctx.Value("user_id"); v != nil {
+		fields["user_id"] = v
 	}
 
+	return l.WithFields(fields)
+}
+
+func (l *Logger) WithFields(fields map[string]any) *Logger {
+	newFields := make(map[string]any)
+	for k, v := range l.fields {
+		newFields[k] = v
+	}
+	for k, v := range fields {
+		newFields[k] = v
+	}
+
+	return &Logger{
+		out:        l.out,
+		level:      l.level,
+		jsonOutput: l.jsonOutput,
+		showCaller: l.showCaller,
+		color:      l.color,
+		fields:     newFields,
+	}
 }
 
 func (l *Logger) Debug(format string, args ...interface{}) {
