@@ -26,6 +26,9 @@ const (
 	FATAL
 )
 
+var defaultLogger *Logger
+var once sync.Once
+
 var levelStrings = []string{
 	"DEBUG",
 	"INFO",
@@ -163,6 +166,20 @@ func (l *Logger) WithContext(ctx context.Context) *Logger {
 	}
 
 	return l.WithFields(fields)
+}
+
+// DefaultLogger возвращает лениво созданный логгер по умолчанию
+func DefaultLogger() *Logger {
+	once.Do(func() {
+		defaultLogger = New(Config{
+			Level:      INFO,
+			JsonOutput: false,
+			ShowCaller: true,
+			Color:      true,
+			OutputFile: "", // stdout
+		})
+	})
+	return defaultLogger
 }
 
 func (l *Logger) WithFields(fields map[string]any) *Logger {
